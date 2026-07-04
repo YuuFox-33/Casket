@@ -16,6 +16,11 @@ boolean connected = false;
 int lastReconnect = 0;
 int reconnectInterval = 3000; // Try reconnect every 3 seconds
 
+// Non-blocking connection-attempt state
+boolean connectAttemptPending = false;
+int connectAttemptStart = 0;
+int connectTimeout = 1500; // give the socket up to 1.5s to come up before giving up
+
 String[] servoNames = {"Base", "Shoulder", "Elbow", "Wrist P", "Wrist R"};
 int[] servoValues = {90, 90, 90, 90, 90};
 int[] sliderX = {50, 50, 50, 50, 50};
@@ -127,8 +132,10 @@ void setup() {
 void draw() {
   background(30);
   
-  // Auto-reconnect
-  if (!connected || (esp32Client != null && !esp32Client.active())) {
+  // Auto-reconnect (non-blocking)
+  if (connectAttemptPending) {
+    checkPendingConnection();
+  } else if (!connected || (esp32Client != null && !esp32Client.active())) {
     if (millis() - lastReconnect > reconnectInterval) {
       connectToESP32();
       lastReconnect = millis();
@@ -239,29 +246,44 @@ void drawSlider(int index) {
 void connectToESP32() {
   try {
     println("\n→ Connecting to " + espIP + ":" + espPort + "...");
-    
+
     if (esp32Client != null) {
       esp32Client.stop();
     }
-    
+
+    status = "CONNECTING...";
     esp32Client = new Client(this, espIP, espPort);
-    delay(200);
-    
-    if (esp32Client.active()) {
-      connected = true;
-      status = "CONNECTED";
-      println("✓✓✓ CONNECTED ✓✓✓");
-      sendToESP32();
-    } else {
-      connected = false;
-      status = "FAILED";
-      println("✗ Connection failed");
-    }
+
+    // Don't block draw() waiting for the socket - just mark an attempt as
+    // pending and let checkPendingConnection() poll it on later frames.
+    connectAttemptPending = true;
+    connectAttemptStart = millis();
   } catch (Exception e) {
     connected = false;
+    connectAttemptPending = false;
     status = "ERROR";
     println("✗ Error: " + e.getMessage());
   }
+}
+
+// Polls a connection attempt started by connectToESP32() without blocking
+// the draw loop. Succeeds as soon as the socket goes active, and only gives
+// up after connectTimeout ms - so a slow ESP32 (freshly booted, weak wifi)
+// gets a real chance instead of being judged after a fixed 200ms nap.
+void checkPendingConnection() {
+  if (esp32Client != null && esp32Client.active()) {
+    connected = true;
+    connectAttemptPending = false;
+    status = "CONNECTED";
+    println("✓✓✓ CONNECTED ✓✓✓");
+    sendToESP32();
+  } else if (millis() - connectAttemptStart > connectTimeout) {
+    connected = false;
+    connectAttemptPending = false;
+    status = "FAILED";
+    println("✗ Connection failed (timed out after " + connectTimeout + "ms)");
+  }
+  // else: still waiting, try again next frame - no delay(), no freeze
 }
 
 // ═══════════════════════════════════════════════════════════

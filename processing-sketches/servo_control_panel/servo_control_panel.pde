@@ -6,6 +6,11 @@ int targetAngle = 90;
 boolean connected = false;
 boolean dragging = false;
 
+// Throttles serial writes from key-repeat so holding an arrow key doesn't
+// flood the Arduino with a write every ~16-33ms (OS key-repeat rate).
+int lastKeySend = 0;
+int keySendInterval = 50; // ms between sends while a key is held
+
 // UI Elements
 int sliderX = 100;
 int sliderY = 400;
@@ -268,31 +273,31 @@ void keyPressed() {
   if (keyCode == UP && targetAngle < 180) {
     targetAngle += 10;
     targetAngle = constrain(targetAngle, 0, 180);
-    sendAngle(targetAngle);
+    sendAngleThrottled(targetAngle);
   }
   if (keyCode == DOWN && targetAngle > 0) {
     targetAngle -= 10;
     targetAngle = constrain(targetAngle, 0, 180);
-    sendAngle(targetAngle);
+    sendAngleThrottled(targetAngle);
   }
   if (keyCode == RIGHT && targetAngle < 180) {
     targetAngle += 1;
     targetAngle = constrain(targetAngle, 0, 180);
-    sendAngle(targetAngle);
+    sendAngleThrottled(targetAngle);
   }
   if (keyCode == LEFT && targetAngle > 0) {
     targetAngle -= 1;
     targetAngle = constrain(targetAngle, 0, 180);
-    sendAngle(targetAngle);
+    sendAngleThrottled(targetAngle);
   }
   
-  // Space to reset
+  // Space to reset - always send immediately, this is a deliberate one-off action
   if (key == ' ') {
     targetAngle = 90;
     sendAngle(targetAngle);
   }
   
-  // Number keys for quick presets
+  // Number keys for quick presets - also immediate, not a repeat-prone action
   if (key >= '0' && key <= '9') {
     int preset = key - '0';
     if (preset <= 180) {
@@ -300,6 +305,19 @@ void keyPressed() {
       targetAngle = constrain(targetAngle, 0, 180);
       sendAngle(targetAngle);
     }
+  }
+}
+
+// Wraps sendAngle() for the arrow-key handlers specifically. Holding an
+// arrow key fires keyPressed() on every OS key-repeat tick (often 30-60Hz),
+// which used to mean a serial write every tick. This drops writes that
+// arrive faster than keySendInterval, so a held key still ends up at the
+// right final angle without spamming the Arduino's UART.
+void sendAngleThrottled(int ang) {
+  int now = millis();
+  if (now - lastKeySend >= keySendInterval) {
+    sendAngle(ang);
+    lastKeySend = now;
   }
 }
 
